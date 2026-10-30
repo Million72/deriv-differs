@@ -659,7 +659,7 @@ footer p {
           <button id="startBtn" class="btn primary" type="button" disabled>Start Bot</button>
           <button id="stopBtn" class="btn warning" type="button" disabled>Stop Bot</button>
         </div>
-        <p class="small">When any watched market prints the same last digit twice in a row, the bot instantly buys one Differs on that digit, then keeps watching. One trade at a time. Differs wins about 90% of the time but pays only a small amount, so one loss costs far more than a win earns. Martingale can rapidly increase risk. Test on a demo account first.</p>
+        <p class="small">When any watched market prints the same last digit twice in a row, the bot instantly buys one Differs on that digit, then keeps watching. One trade at a time. After a loss, the next trade is always on a different market. Differs wins about 90% of the time but pays only a small amount, so one loss costs far more than a win earns. Martingale can rapidly increase risk. Test on a demo account first.</p>
       </section>
 
       <section class="panel">
@@ -866,17 +866,19 @@ function scheduleRender() {
   renderTimer = setTimeout(() => { renderTimer = null; renderWatch(); }, 600);
 }
 function renderWatch() {
+  const avoid = state.running ? avoidedMarket() : null;
   state.selected.forEach((sym) => {
     const r = rows[sym];
     if (!r) return;
     const d = watchOf(sym).digits;
     const text = d.join(" ") || "–";
     const pair = d.length > 1 && d[d.length - 1] === d[d.length - 2];
-    const flag = pair ? `SIGNAL ${d[d.length - 1]}` : "…";
+    const skip = pair && sym === avoid;
+    const flag = skip ? "SKIP · lost" : pair ? `SIGNAL ${d[d.length - 1]}` : "…";
     if (r.shown !== text) { r.digits.textContent = text; r.shown = text; }
     if (r.flag !== flag) {
       r.badge.textContent = flag;
-      r.badge.className = "badge " + (pair ? "ok" : "no");
+      r.badge.className = "badge " + (pair && !skip ? "ok" : "no");
       r.flag = flag;
     }
   });
@@ -987,9 +989,24 @@ function resolveLocal(sym, digit, epoch) {
   return changed;
 }
 
+/* After a LOSS the next trade must be on a different market. */
+function avoidedMarket() {
+  if (state.selected.length < 2) return null;     // nothing else to switch to
+  for (let i = state.tradeLog.length - 1; i >= 0; i--) {
+    const t = state.tradeLog[i];
+    if (known(t)) return outcomeOf(t) ? null : t.symbol;
+  }
+  return null;
+}
+
 /* A repeated digit was just seen: buy one Differs on it, instantly. */
 function onSignal(sym, digit, epoch) {
   if (state.unresolved.length) return;           // one run at a time
+  const avoid = avoidedMarket();
+  if (avoid && sym === avoid) {
+    showMessage(`Skipping ${NAME[sym]}: it lost the last trade. Waiting for a repeat on another market…`);
+    return;
+  }
   if (!state.tradingReady) { showMessage("Account session reconnecting… trading resumes automatically.", "error"); return; }
   const cfg = getConfig();
   let stake = stakeFor(cfg);
